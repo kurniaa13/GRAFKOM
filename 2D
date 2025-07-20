@@ -1,0 +1,342 @@
+from OpenGL.GL import *
+from OpenGL.GLUT import *
+from OpenGL.GLU import *
+from math import sin, cos, radians
+import sys
+
+# Penyimpanan objek
+objects = []
+current_object = {'type': None, 'points': [], 'color': (1.0, 1.0, 1.0), 'thickness': 1}
+selected_tool = None
+window_box = []
+clip_window = None
+selected_index = -1
+
+# Warna
+colors = {
+    'r': (1, 0, 0),
+    'g': (0, 1, 0),
+    'b': (0, 0, 1),
+    'y': (1, 1, 0),
+    'w': (1, 1, 1),
+    'k': (0, 0, 0)
+}
+
+def draw_point(p):
+    glPointSize(current_object['thickness'] * 2)
+    glBegin(GL_POINTS)
+    glVertex2f(*p)
+    glEnd()
+
+def draw_line(p1, p2):
+    glLineWidth(current_object['thickness'])
+    glBegin(GL_LINES)
+    glVertex2f(*p1)
+    glVertex2f(*p2)
+    glEnd()
+
+def draw_square(p1, p2):
+    x1, y1 = p1
+    x2, y2 = p2
+    glLineWidth(current_object['thickness'])
+    glBegin(GL_LINE_LOOP)
+    glVertex2f(x1, y1)
+    glVertex2f(x2, y1)
+    glVertex2f(x2, y2)
+    glVertex2f(x1, y2)
+    glEnd()
+
+def draw_ellipse(p1, p2):
+    cx = (p1[0] + p2[0]) / 2
+    cy = (p1[1] + p2[1]) / 2
+    rx = abs(p2[0] - p1[0]) / 2
+    ry = abs(p2[1] - p1[1]) / 2
+    glLineWidth(current_object['thickness'])
+    glBegin(GL_LINE_LOOP)
+    for i in range(360):
+        theta = radians(i)
+        glVertex2f(cx + rx * cos(theta), cy + ry * sin(theta))
+    glEnd()
+
+def display():
+    glClear(GL_COLOR_BUFFER_BIT)
+    for i, obj in enumerate(objects):
+        glColor3f(1.0, 0.5, 0.0) if i == selected_index else glColor3f(*obj['color'])
+        if obj['type'] == 'point':
+            draw_point(obj['points'][0])
+        elif obj['type'] == 'line' and len(obj['points']) == 2:
+            draw_line(*obj['points'])
+        elif obj['type'] == 'square' and len(obj['points']) == 2:
+            draw_square(*obj['points'])
+        elif obj['type'] == 'ellipse' and len(obj['points']) == 2:
+            draw_ellipse(*obj['points'])
+
+    if clip_window and len(clip_window) == 2:
+        glColor3f(1, 1, 0)
+        glLineWidth(2)
+        draw_square(*clip_window)
+    glFlush()
+
+def mouse_click(button, state, x, y):
+    global current_object, clip_window, selected_index, window_box
+    if state == GLUT_DOWN:
+        mx, my = x, 500 - y
+        if selected_tool in ['point', 'line', 'square', 'ellipse']:
+            current_object['points'].append((mx, my))
+            if selected_tool == 'point' or len(current_object['points']) == 2:
+                current_object['type'] = selected_tool
+                objects.append(current_object.copy())
+                current_object['points'] = []
+        elif selected_tool == 'window':
+            window_box.append((mx, my))
+            if len(window_box) == 2:
+                x1, y1 = window_box[0]
+                x2, y2 = window_box[1]
+                clip_window = [(min(x1,x2), min(y1,y2)), (max(x1,x2), max(y1,y2))]
+                window_box.clear()
+                apply_clipping()
+        elif selected_tool == 'select':
+            selected_index = find_object_at_point(mx, my)
+    glutPostRedisplay()
+
+def find_object_at_point(mx, my):
+    for i, obj in enumerate(objects):
+        if obj['type'] == 'point':
+            px, py = obj['points'][0]
+            if abs(px - mx) < 10 and abs(py - my) < 10:
+                return i
+        elif obj['type'] == 'line' and len(obj['points']) == 2:
+            if distance_to_line(mx, my, obj['points'][0], obj['points'][1]) < 10:
+                return i
+        elif obj['type'] in ['square', 'ellipse']:
+            p1, p2 = obj['points']
+            if (min(p1[0], p2[0]) - 10 <= mx <= max(p1[0], p2[0]) + 10 and
+                min(p1[1], p2[1]) - 10 <= my <= max(p1[1], p2[1]) + 10):
+                return i
+    return -1
+
+def distance_to_line(px, py, p1, p2):
+    x1, y1 = p1
+    x2, y2 = p2
+    A = px - x1
+    B = py - y1
+    C = x2 - x1
+    D = y2 - y1
+    dot = A * C + B * D
+    len_sq = C * C + D * D
+    if len_sq == 0:
+        return ((px - x1) ** 2 + (py - y1) ** 2) ** 0.5
+    param = dot / len_sq
+    if param < 0:
+        xx, yy = x1, y1
+    elif param > 1:
+        xx, yy = x2, y2
+    else:
+        xx = x1 + param * C
+        yy = y1 + param * D
+    return ((px - xx) ** 2 + (py - yy) ** 2) ** 0.5
+
+INSIDE, LEFT, RIGHT, BOTTOM, TOP = 0, 1, 2, 4, 8
+
+def compute_out_code(x, y, x_min, y_min, x_max, y_max):
+    code = INSIDE
+    if x < x_min: code |= LEFT
+    elif x > x_max: code |= RIGHT
+    if y < y_min: code |= BOTTOM
+    elif y > y_max: code |= TOP
+    return code
+
+def cohen_sutherland_clip(p1, p2, x_min, y_min, x_max, y_max):
+    x1, y1 = p1
+    x2, y2 = p2
+    out1 = compute_out_code(x1, y1, x_min, y_min, x_max, y_max)
+    out2 = compute_out_code(x2, y2, x_min, y_min, x_max, y_max)
+    while True:
+        if not (out1 | out2):
+            return (x1, y1), (x2, y2)
+        elif out1 & out2:
+            return None, None
+        else:
+            x, y = 0, 0
+            out = out1 if out1 else out2
+            if out & TOP:
+                x = x1 + (x2 - x1) * (y_max - y1) / (y2 - y1)
+                y = y_max
+            elif out & BOTTOM:
+                x = x1 + (x2 - x1) * (y_min - y1) / (y2 - y1)
+                y = y_min
+            elif out & RIGHT:
+                y = y1 + (y2 - y1) * (x_max - x1) / (x2 - x1)
+                x = x_max
+            elif out & LEFT:
+                y = y1 + (y2 - y1) * (x_min - x1) / (x2 - x1)
+                x = x_min
+            if out == out1:
+                x1, y1 = x, y
+                out1 = compute_out_code(x1, y1, x_min, y_min, x_max, y_max)
+            else:
+                x2, y2 = x, y
+                out2 = compute_out_code(x2, y2, x_min, y_min, x_max, y_max)
+
+def apply_clipping():
+    global objects
+    if not clip_window: return
+    (x_min, y_min), (x_max, y_max) = clip_window
+    clipped = []
+    for obj in objects:
+        if obj['type'] == 'point':
+            x, y = obj['points'][0]
+            if x_min <= x <= x_max and y_min <= y <= y_max:
+                obj['color'] = (0, 1, 0)
+                clipped.append(obj)
+        elif obj['type'] == 'line':
+            p1, p2 = cohen_sutherland_clip(obj['points'][0], obj['points'][1], x_min, y_min, x_max, y_max)
+            if p1 and p2:
+                obj['points'] = [p1, p2]
+                obj['color'] = (0, 1, 0)
+                clipped.append(obj)
+        else:
+            clipped.append(obj)
+    objects[:] = clipped
+
+def apply_transform(fn):
+    if selected_index < 0 or selected_index >= len(objects): return
+    obj = objects[selected_index]
+    obj['points'] = [fn(x, y) for x, y in obj['points']]
+    glutPostRedisplay()
+
+def transform_clip_window(dx=0, dy=0, scale=1.0):
+    global clip_window
+    if clip_window and len(clip_window) == 2:
+        (x1, y1), (x2, y2) = clip_window
+        cx = (x1 + x2) / 2
+        cy = (y1 + y2) / 2
+        x1 += dx; x2 += dx; y1 += dy; y2 += dy
+        x1 = cx + (x1 - cx) * scale
+        x2 = cx + (x2 - cx) * scale
+        y1 = cy + (y1 - cy) * scale
+        y2 = cy + (y2 - cy) * scale
+        clip_window = [(min(x1,x2), min(y1,y2)), (max(x1,x2), max(y1,y2))]
+        glutPostRedisplay()
+
+def center_of_object(obj):
+    xs = [p[0] for p in obj['points']]
+    ys = [p[1] for p in obj['points']]
+    return sum(xs)/len(xs), sum(ys)/len(ys)
+
+# ... (kode Anda tetap sama sampai fungsi keyboard)
+
+def keyboard(key, x, y):
+    global selected_tool, current_object, clip_window, selected_index
+    if isinstance(key, bytes): key = key.decode('utf-8')
+
+    if key == '1': selected_tool = 'point'
+    elif key == '2': selected_tool = 'line'
+    elif key == '3': selected_tool = 'square'
+    elif key == '4': selected_tool = 'ellipse'
+    elif key == 'w': selected_tool = 'window'
+    elif key == 's': selected_tool = 'select'
+    elif key in colors:
+        current_object['color'] = colors[key]
+    elif key == '+':
+        current_object['thickness'] += 1
+    elif key == '-':
+        current_object['thickness'] = max(1, current_object['thickness'] - 1)
+    elif key == 'a':
+        apply_transform(lambda x, y: (x - 20, y))
+    elif key == 'd':
+        apply_transform(lambda x, y: (x + 20, y))
+    elif key == 'q':
+        apply_transform(lambda x, y: (x, y + 20))
+    elif key == 'e':
+        apply_transform(lambda x, y: (x, y - 20))
+    elif key == 'r':  # Rotasi searah jarum jam
+        if selected_index >= 0:
+            cx, cy = center_of_object(objects[selected_index])
+            angle = radians(15)
+            cos_a = cos(angle)
+            sin_a = sin(angle)
+            apply_transform(lambda x, y: (
+                cx + (x - cx) * cos_a - (y - cy) * sin_a,
+                cy + (x - cx) * sin_a + (y - cy) * cos_a
+            ))
+    elif key == 't':  # Rotasi berlawanan arah jarum jam
+        if selected_index >= 0:
+            cx, cy = center_of_object(objects[selected_index])
+            angle = radians(-15)
+            cos_a = cos(angle)
+            sin_a = sin(angle)
+            apply_transform(lambda x, y: (
+                cx + (x - cx) * cos_a - (y - cy) * sin_a,
+                cy + (x - cx) * sin_a + (y - cy) * cos_a
+            ))
+    elif key == 'z':
+        if selected_index >= 0:
+            cx, cy = center_of_object(objects[selected_index])
+            apply_transform(lambda x, y: (cx + 1.1 * (x - cx), cy + 1.1 * (y - cy)))
+    elif key == 'x':
+        if selected_index >= 0:
+            cx, cy = center_of_object(objects[selected_index])
+            apply_transform(lambda x, y: (cx + 0.9 * (x - cx), cy + 0.9 * (y - cy)))
+    elif key == 'p':
+        apply_clipping()
+    elif key == 'c':
+        objects.clear()
+        clip_window = None
+        selected_index = -1
+    elif key == 'j':
+        transform_clip_window(dx=-20)
+    elif key == 'l':
+        transform_clip_window(dx=20)
+    elif key == 'i':
+        transform_clip_window(dy=20)
+    elif key == 'k':
+        transform_clip_window(dy=-20)
+    elif key == '[':
+        transform_clip_window(scale=0.9)
+    elif key == ']':
+        transform_clip_window(scale=1.1)
+    elif key == 'h':
+        print_help()
+
+    glutPostRedisplay()
+
+
+def print_help():
+    print("""
+    === OpenGL Drawing Tool ===
+    Tools: 1-Point, 2-Line, 3-Square, 4-Ellipse
+    Colors: r g b y w k
+    Thickness: + / -
+    Select: s | Clipping Window: w | Apply Clipping: p
+    Transform (after select):
+      a d q e - move
+      r - rotate
+      z x - scale
+    Move Clipping Window: j l i k
+    Scale Clipping Window: [ ]
+    Clear All: c
+    Show Help: h
+    """)
+
+def init():
+    glClearColor(0.2, 0.2, 0.2, 1)
+    glMatrixMode(GL_PROJECTION)
+    glLoadIdentity()
+    gluOrtho2D(0, 800, 0, 500)
+    print("OpenGL 2D Drawing Tool initialized. Press 'h' for help.")
+
+def main():
+    glutInit(sys.argv)
+    glutInitDisplayMode(GLUT_SINGLE | GLUT_RGB)
+    glutInitWindowSize(800, 500)
+    glutInitWindowPosition(100, 100)
+    glutCreateWindow(b"OpenGL 2D Drawing Tool - Clipping & Transform")
+    glutDisplayFunc(display)
+    glutMouseFunc(mouse_click)
+    glutKeyboardFunc(keyboard)
+    init()
+    glutMainLoop()
+
+if _name_ == "_main_":
+    main()
