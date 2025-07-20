@@ -1,0 +1,129 @@
+import pygame
+from pygame.locals import *
+from OpenGL.GL import *
+from OpenGL.GLU import *
+
+# Inisialisasi posisi dan rotasi objek
+pos = [0.0, 0.0, -6.0]  # z ke belakang
+rot = [0.0, 0.0, 0.0]
+
+# Definisi kubus
+vertices = [
+    [-1, -1, -1],
+    [ 1, -1, -1],
+    [ 1,  1, -1],
+    [-1,  1, -1],
+    [-1, -1,  1],
+    [ 1, -1,  1],
+    [ 1,  1,  1],
+    [-1,  1,  1]
+]
+
+faces = [
+    [0, 1, 2, 3],
+    [3, 2, 6, 7],
+    [1, 5, 6, 2],
+    [4, 5, 1, 0],
+    [4, 0, 3, 7],
+    [5, 4, 7, 6]
+]
+
+# Normal permukaan untuk shading
+normals = [
+    [ 0,  0, -1],
+    [ 0,  1,  0],
+    [ 1,  0,  0],
+    [ 0, -1,  0],
+    [-1,  0,  0],
+    [ 0,  0,  1]
+]
+
+def init_lighting():
+    glEnable(GL_LIGHTING)
+    glEnable(GL_LIGHT0)
+
+    # Ambient
+    ambient = [0.3, 0.3, 0.3, 1.0]
+    glLightfv(GL_LIGHT0, GL_AMBIENT, ambient)
+
+    # Diffuse
+    diffuse = [0.6, 0.6, 0.6, 1.0]
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, diffuse)
+
+    # Specular
+    specular = [1.0, 1.0, 1.0, 1.0]
+    glLightfv(GL_LIGHT0, GL_SPECULAR, specular)
+
+    # Posisi lampu
+    light_pos = [4.0, 4.0, 6.0, 1.0]
+    glLightfv(GL_LIGHT0, GL_POSITION, light_pos)
+
+    # Material
+    glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, [0.0, 0.6, 1.0, 1.0])
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, [1.0, 1.0, 1.0, 1.0])
+    glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 50)
+
+def draw_cube():
+    glBegin(GL_QUADS)
+    for i, face in enumerate(faces):
+        glNormal3fv(normals[i])
+        for vertex in face:
+            glVertex3fv(vertices[vertex])
+    glEnd()
+
+def main():
+    pygame.init()
+    display = (800, 600)
+    pygame.display.set_mode(display, DOUBLEBUF | OPENGL)
+
+    # Perspektif kamera
+    glMatrixMode(GL_PROJECTION)
+    glLoadIdentity()
+    gluPerspective(45, (display[0]/display[1]), 0.1, 50.0)
+
+    glMatrixMode(GL_MODELVIEW)
+    glEnable(GL_DEPTH_TEST)
+    glShadeModel(GL_SMOOTH)
+
+    init_lighting()
+
+    clock = pygame.time.Clock()
+    running = True
+    while running:
+        dt = clock.tick(60)
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+        # Kontrol keyboard
+        keys = pygame.key.get_pressed()
+        if keys[K_LEFT]: rot[1] -= 2
+        if keys[K_RIGHT]: rot[1] += 2
+        if keys[K_UP]: rot[0] -= 2
+        if keys[K_DOWN]: rot[0] += 2
+        if keys[K_w]: pos[2] += 0.2
+        if keys[K_s]: pos[2] -= 0.2
+        if keys[K_a]: pos[0] -= 0.2
+        if keys[K_d]: pos[0] += 0.2
+
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        glLoadIdentity()
+
+        # Kamera dengan gluLookAt
+        gluLookAt(0, 0, 8,  # posisi kamera
+                  0, 0, 0,  # target (pusat dunia)
+                  0, 1, 0)  # vektor atas
+
+        glTranslatef(pos[0], pos[1], pos[2])
+        glRotatef(rot[0], 1, 0, 0)
+        glRotatef(rot[1], 0, 1, 0)
+        glRotatef(rot[2], 0, 0, 1)
+
+        draw_cube()
+        pygame.display.flip()
+
+    pygame.quit()
+
+if _name_ == "_main_":
+    main()
